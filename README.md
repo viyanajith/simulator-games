@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Simulator Games
 
 A collection of browser-based simulator games built with HTML5 Canvas and JavaScript.
@@ -30,3 +31,7 @@ This repository is configured for GitHub Pages deployment. The main game is acce
 ## License
 
 MIT License - Feel free to use and modify as needed.
+=======
+# simulator-games
+these are simulator games what simulates anything, a bit fun though!
+>>>>>>> 158762a2836736df995e5de642e7b743dd3200bf
