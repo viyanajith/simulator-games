@@ -1,37 +1,45 @@
-<<<<<<< HEAD
-# Simulator Games
+# Simulator Games Collection
 
-A collection of browser-based simulator games built with HTML5 Canvas and JavaScript.
+A fun collection of browser-based simulator games built with HTML5 Canvas and vanilla JavaScript. No frameworks, no dependencies - just pure gaming fun!
 
-## Games Included
+## 🎮 Available Games
 
-### Number CPS Fighter
-An engaging clicking game where you battle enemies by achieving target clicks-per-second (CPS) rates. Features:
-- Dynamic difficulty scaling
-- Score progression system
-- Local storage for save states
-- Smooth animations and responsive controls
+### 🥊 Number CPS Fighter
+Test your clicking speed and strategy in this engaging number battle game!
 
-## How to Play
+**Gameplay Features:**
+- Battle against AI opponents with increasing difficulty
+- Click enemies to target them, then press SPACE to fight
+- Achieve the required Clicks Per Second (CPS) to win battles
+- Progress through levels and beat your high score
+- Local storage saves your progress automatically
 
-1. Visit the [live demo](https://ajithganesan.github.io/simulator-games/)
-2. Click "Number CPS Fighter" to start playing
-3. Use WASD to move, click enemies to target them, and press SPACE to fight
-4. Achieve the required CPS to win battles and progress
+**How to Play:**
+1. Click on a red number to target it (takes ~3 seconds to approach)
+2. Once docked, press SPACE to start fighting
+3. Click as fast as you can to reach the required CPS
+4. Win battles to increase your score and unlock higher difficulties
+5. Press P to pause the game anytime
 
-## Development
+## 🚀 Quick Start
 
-This is a single-file HTML application that can be run directly in any modern web browser. No build process or dependencies required.
+1. Clone this repository
+2. Open `index.html` in any modern web browser
+3. Click on any game to start playing!
 
-## GitHub Pages
+## 🌐 Online Play
 
-This repository is configured for GitHub Pages deployment. The main game is accessible at:
-`https://ajithganesan.github.io/simulator-games/`
+Play directly in your browser:
+[Live Demo](https://ajithganesan.github.io/simulator-games/)
 
-## License
+## 🛠 Development
 
-MIT License - Feel free to use and modify as needed.
-=======
-# simulator-games
-these are simulator games what simulates anything, a bit fun though!
->>>>>>> 158762a2836736df995e5de642e7b743dd3200bf
+This project uses vanilla JavaScript and HTML5 Canvas for a lightweight, framework-free experience. All games are self-contained in their own HTML files for easy sharing and deployment.
+
+## 📝 License
+
+MIT License - Feel free to use, modify, and share as you like!
+
+## 🤝 Contributing
+
+Found a bug or have an idea for a new game? Open an issue or submit a pull request!

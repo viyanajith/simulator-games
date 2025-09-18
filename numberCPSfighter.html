@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Number CPS Fighter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { margin:0; height:100%; background:#111; overflow:hidden; font-family: Arial, sans-serif; }
+    #ui{
+      position:fixed; left:12px; top:12px; color:#eee; font:14px/1.35 Arial, sans-serif;
+      background:rgba(0,0,0,.35); padding:8px 10px; border-radius:8px; backdrop-filter: blur(2px);
+    }
+    #barWrap{
+      position:fixed; left:50%; transform:translateX(-50%);
+      bottom:24px; width:360px; height:30px; border:2px solid #555; background:#222; border-radius:8px; overflow:hidden;
+    }
+    #barFill{ height:100%; width:0%; background:orange; transition:width .08s linear; }
+    #scores {
+      position: fixed; right: 12px; bottom: 12px; color:#eee;
+      background: rgba(0,0,0,.35); padding: 8px 10px; border-radius: 8px; text-align: right;
+      font-size: 14px;
+    }
+    canvas{ display:block; }
+    .tag { color:#bbb; }
+    #pauseOverlay{
+      position: fixed; left:50%; top:50%; transform: translate(-50%,-50%);
+      width: 50vw; height: 50vh; min-width: 320px; min-height: 240px;
+      background: rgba(0,0,0,0.9); color:#fff; border: 2px solid #444;
+      border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      display: none; padding: 20px;
+    }
+    #pauseOverlay h2{ margin: 0 0 12px 0; font-weight: 700; letter-spacing: .5px; }
+    #pauseOverlay .stat{ font-size: 18px; margin: 8px 0; }
+    #pauseOverlay .spacer{ height: 16px; }
+    #pauseOverlay button, #pauseOverlay a {
+      padding: 10px 16px; border-radius: 10px; border: 1px solid #666; background: #222; color:#fff;
+      cursor: pointer; font-size: 16px; text-decoration: none; display: inline-block; margin: 4px;
+    }
+    #pauseOverlay button:hover, #pauseOverlay a:hover { background:#333; }
+  </style>
+</head>
+<body>
+  <div id="gameScreen">
+    <div id="ui">
+      <div><strong>Player</strong>: <span id="pVal">10</span></div>
+      <div><strong>Selected</strong>: <span id="fVal">—</span> <span id="status" class="tag">(idle)</span></div>
+      <div><strong>CPS</strong>: <span id="cps">0.0</span> / <span id="req">0.0</span></div>
+      <div class="tag">Click a red number → auto-approach (~3s). Docked? Press <b>SPACE</b>. Pause with <b>P</b>.</div>
+    </div>
+    <div id="barWrap"><div id="barFill"></div></div>
+    <div id="scores">
+      <div>Score: <span id="scoreEl">0</span></div>
+      <div>High Score: <span id="highEl">0</span></div>
+    </div>
+    <div id="pauseOverlay" aria-hidden="true">
+      <h2>Paused</h2>
+      <div class="stat">score: <span id="pauseScore">0</span></div>
+      <div class="stat">highscore: <span id="pauseHigh">0</span></div>
+      <div class="spacer"></div>
+      <button id="restartBtn">restart</button>
+      <a href="index.html">back to main screen</a>
+    </div>
+    <canvas id="game"></canvas>
+  </div>
+  <script>
+    const DOCK_TIME_SEC   = 3;
+    const PLAYER_SPEED    = 260;
+    const ARRIVAL_THRESH  = 5;
+    const WINDOW_MS       = 1000;
+    const FAIL_GRACE_MS   = 400;
+    const ENEMY_COUNT     = 7;
+    const ENEMY_SPACING   = 170;
+    const ENEMY_R         = 36;
+    const PLAYER_R        = 32;
+    const LS_SCORE   = 'ng_score';
+    const LS_PLAYER  = 'ng_player';
+    const LS_HIGHS   = 'ng_highscore';
+    const LS_SNAP    = 'ng_snapshot';
+    const LS_DIFF    = 'ng_difficulty';
+    const fmt = (n) => Number(Math.floor(n)).toLocaleString('en-US');
+    const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+    const distance = (x1,y1,x2,y2) => Math.hypot(x1-x2, y1-y2);
+    const randInt = (a,b) => Math.floor(Math.random()*(b-a+1))+a;
+    let difficulty_control = 10;
+    function nextEnemyValue(basePlayer){
+      basePlayer = Math.max(1, Math.floor(basePlayer));
+      const minPct = Math.max(0, difficulty_control - 20);
+      const maxPct = Math.max(minPct, difficulty_control);
+      const pct = randInt(minPct, maxPct);
+      const mult = 1 + (pct / 100);
+      const val = Math.max(1, Math.round(basePlayer * mult));
+      return val;
+    }
+    function calcRequiredCPS(p, f) {
+      p = Math.max(1, p);
+      if (p === f) return 5;
+      if (p < f) {
+        const ratio = f / p;
+        const cps = 5 + 7 * (1 - Math.exp(-3*(ratio - 1)));
+        return Math.min(12, Math.max(5, cps));
+      } else {
+        const cps = (5 / p) * f;
+        return Math.max(0.5, Math.min(5, cps));
+      }
+    }
+    let playerValue = 10;
+    let score = 10;
+    let highScore = 10;
+    try {
+      const savedPlayer = parseInt(localStorage.getItem(LS_PLAYER) || '0', 10);
+      const savedScore  = parseInt(localStorage.getItem(LS_SCORE)  || '0', 10);
+      const savedHigh   = parseInt(localStorage.getItem(LS_HIGHS)  || '0', 10);
+      const savedDiff   = parseInt(localStorage.getItem(LS_DIFF)   || 'NaN', 10);
+      if (!Number.isNaN(savedPlayer) && savedPlayer > 0) playerValue = savedPlayer;
+      if (!Number.isNaN(savedScore)  && savedScore  > 0) score = savedScore;
+      if (!Number.isNaN(savedDiff)) difficulty_control = savedDiff;
+      highScore = Math.max(savedHigh || 0, score || 0, playerValue || 0);
+    } catch(e) {}
+    console.log('[difficulty] start =', difficulty_control);
+    let enemies = [];
+    let selectedEnemy = null;
+    let state = 'idle';
+    let inFight = false;
+    let paused = false;
+    let clicks = [];
+    let requiredCPS = 0;
+    let fightStartAt = 0;
+    let nextEnemyId = 0;
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    function resize(){
+      canvas.width = innerWidth;
+      canvas.height = innerHeight;
+      layoutEnemies();
+      recomputePredictions();
+      drawScores();
+      updatePauseOverlay();
+    }
+    addEventListener('resize', resize);
+    const pValEl = document.getElementById('pVal');
+    const fValEl = document.getElementById('fVal');
+    const cpsEl  = document.getElementById('cps');
+    const reqEl  = document.getElementById('req');
+    const barFill = document.getElementById('barFill');
+    const statusEl = document.getElementById('status');
+    const scoreEl = document.getElementById('scoreEl');
+    const highEl  = document.getElementById('highEl');
+    const pauseOverlay = document.getElementById('pauseOverlay');
+    const pauseScoreEl = document.getElementById('pauseScore');
+    const pauseHighEl  = document.getElementById('pauseHigh');
+    const restartBtn   = document.getElementById('restartBtn');
+    function setStatus(s){ statusEl.textContent = `(${s})`; }
+    function drawScores(){ scoreEl.textContent = fmt(score); highEl.textContent = fmt(highScore); }
+    function updatePauseOverlay(){
+      pauseScoreEl.textContent = fmt(score);
+      pauseHighEl.textContent  = fmt(highScore);
+      pauseOverlay.style.display = paused ? 'block' : 'none';
+      pauseOverlay.setAttribute('aria-hidden', paused ? 'false' : 'true');
+    }
+    function saveSnapshot() {
+      try {
+        const snap = { playerValue, score, difficulty_control };
+        localStorage.setItem(LS_SNAP, JSON.stringify(snap));
+        localStorage.setItem(LS_PLAYER, String(playerValue));
+        localStorage.setItem(LS_SCORE,  String(score));
+        localStorage.setItem(LS_DIFF,   String(difficulty_control));
+        if (score > highScore) highScore = score;
+        localStorage.setItem(LS_HIGHS, String(highScore));
+        drawScores();
+        if (paused) updatePauseOverlay();
+      } catch(e) { console.warn('save failed', e); }
+    }
+    window.addEventListener('beforeunload', saveSnapshot);
+    window.revert_highscore = function(){
+      try { localStorage.removeItem(LS_HIGHS); } catch(e){}
+      highScore = 0; drawScores(); updatePauseOverlay();
+      console.log('[revert_highscore] high score cleared');
+    };
+    window.revert_score = function(){
+      try {
+        const snap = JSON.parse(localStorage.getItem(LS_SNAP) || 'null');
+        if (snap && typeof snap.playerValue === 'number' && typeof snap.score === 'number') {
+          playerValue = snap.playerValue;
+          score = snap.score;
+          if (typeof snap.difficulty_control === 'number') {
+            difficulty_control = snap.difficulty_control;
+            console.log('[difficulty] restored from snapshot =', difficulty_control);
+            localStorage.setItem(LS_DIFF, String(difficulty_control));
+          }
+          localStorage.setItem(LS_PLAYER, String(playerValue));
+          localStorage.setItem(LS_SCORE,  String(score));
+          drawScores(); updatePauseOverlay();
+          console.log('[revert_score] restored to snapshot', snap);
+        } else {
+          console.log('[revert_score] no snapshot found');
+        }
+      } catch(e) { console.warn('revert failed', e); }
+    };
+    const player = { x: 140, y: 140, r: PLAYER_R, speed: PLAYER_SPEED };
+    function generateEnemies(n){
+      enemies.length = 0;
+      const cx = canvas.width * 0.5;
+      const cy = canvas.height * 0.5;
+      const padY = 60;
+      let predicted = playerValue;
+      for (let i=0; i<n; i++){
+        const x = cx + i * ENEMY_SPACING;
+        const y = (i===0) ? cy : randInt(padY, canvas.height - padY);
+        const val = nextEnemyValue(predicted);
+        enemies.push({ id: nextEnemyId++, x, y, r: ENEMY_R, val, predAfter: predicted + val });
+        predicted += val;
+      }
+    }
+    function layoutEnemies(){
+      if (!enemies.length) return;
+      const cx = canvas.width * 0.5;
+      const cy = canvas.height * 0.5;
+      const padY = 60;
+      enemies.forEach((e, i) => {
+        e.x = cx + i * ENEMY_SPACING;
+        if (i === 0) e.y = cy;
+        e.y = clamp(e.y, padY, canvas.height - padY);
+      });
+    }
+    function recomputePredictions(){
+      enemies.sort((a,b)=>a.x-b.x);
+      let running = playerValue;
+      for (const e of enemies){
+        e.predAfter = running + e.val;
+        running = e.predAfter;
+      }
+    }
+    function appendEnemy(){
+      const lastPredicted = enemies.length ? enemies[enemies.length-1].predAfter : playerValue;
+      const x = (enemies.length ? enemies[enemies.length-1].x : canvas.width*0.5) + ENEMY_SPACING;
+      const padY = 60;
+      const y = randInt(padY, canvas.height - padY);
+      const val = nextEnemyValue(lastPredicted);
+      enemies.push({ id: nextEnemyId++, x, y, r: ENEMY_R, val, predAfter: lastPredicted + val });
+    }
+    function init() {
+      resize();
+      generateEnemies(ENEMY_COUNT);
+      layoutEnemies();
+      recomputePredictions();
+      drawScores();
+      setStatus('idle');
+    }
+    init();
+    const keys = {};
+    addEventListener('keydown', (e)=>{
+      if (e.code === 'Space') e.preventDefault();
+      if (e.key === 'p' || e.key === 'P') {
+        paused = !paused;
+        if (paused) {
+          state = 'paused'; setStatus('paused'); saveSnapshot(); updatePauseOverlay();
+        } else {
+          state = 'idle'; setStatus('idle'); updatePauseOverlay();
+        }
+        return;
+      }
+      keys[e.code] = true;
+      if (e.code === 'Space' && !e.repeat && !paused) {
+        if (state === 'ready' && selectedEnemy){
+          startFight();
+          clicks.push(Date.now());
+        } else if (state === 'fighting') {
+          clicks.push(Date.now());
+        }
+      }
+    });
+    addEventListener('keyup',   (e)=>{ keys[e.code]=false; });
+    let autoApproach = false;
+    let target = { x: 0, y: 0 };
+    let approachSpeed = 0;
+    canvas.addEventListener('mousedown', (e)=>{
+      if (inFight || paused) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      let picked = null;
+      for (let i=enemies.length-1; i>=0; i--){
+        const en = enemies[i];
+        if (distance(mx,my,en.x,en.y) <= en.r){ picked = en; break; }
+      }
+      if (!picked) return;
+      selectedEnemy = picked;
+      fValEl.textContent = fmt(selectedEnemy.val);
+      target.x = selectedEnemy.x; target.y = selectedEnemy.y;
+      const startDist = distance(player.x, player.y, target.x, target.y);
+      if (startDist <= ARRIVAL_THRESH) {
+        autoApproach = false;
+        state = 'ready'; setStatus('ready — press SPACE');
+        player.x = target.x; player.y = target.y;
+      } else {
+        approachSpeed = startDist / DOCK_TIME_SEC;
+        autoApproach = true;
+        state = 'approaching'; setStatus('approaching…');
+      }
+    });
+    function startFight(){
+      inFight = true;
+      state = 'fighting';
+      clicks.length = 0;
+      requiredCPS = calcRequiredCPS(playerValue, selectedEnemy.val);
+      reqEl.textContent = requiredCPS.toFixed(2);
+      fightStartAt = Date.now();
+      barFill.style.width = '0%';
+      barFill.style.background = 'orange';
+      setStatus('fighting');
+    }
+    function handleLossReset(){
+      inFight = false;
+      state = 'idle';
+      autoApproach = false;
+      selectedEnemy = null;
+      requiredCPS = 0;
+      clicks.length = 0;
+      barFill.style.width = '0%';
+      barFill.style.background = 'orange';
+      document.getElementById('fVal').textContent = '—';
+      setStatus('lost — try again');
+      playerValue = 10;
+      score = 10;
+      difficulty_control = 10;
+      console.log('[difficulty] reset to', difficulty_control);
+      player.x = 140;
+      player.y = 140;
+      nextEnemyId = 0;
+      generateEnemies(ENEMY_COUNT);
+      layoutEnemies();
+      recomputePredictions();
+      saveSnapshot();
+      drawScores();
+    }
+    function endFight(win){
+      inFight = false;
+      if (win) {
+        playerValue += selectedEnemy.val;
+        score += selectedEnemy.val;
+        difficulty_control += 1;
+        console.log('[difficulty] increased to', difficulty_control);
+        enemies = enemies.filter(e => e !== selectedEnemy);
+        selectedEnemy = null;
+        fValEl.textContent = '—';
+        appendEnemy();
+        layoutEnemies();
+        recomputePredictions();
+        if (score > highScore) highScore = score;
+        saveSnapshot();
+        state = 'idle'; setStatus('idle');
+      } else {
+        handleLossReset();
+      }
+      barFill.style.width = '0%';
+      barFill.style.background = 'orange';
+    }
+    restartBtn.addEventListener('click', () => {
+      if (!paused) return;
+      paused = false;
+      updatePauseOverlay();
+      handleLossReset();
+    });
+    let lastTS = performance.now();
+    function tick(ts){
+      const dt = Math.min(0.033, (ts - lastTS) / 1000); lastTS = ts;
+      if (!paused) {
+        if (!inFight && !autoApproach){
+          let vx=0, vy=0;
+          if (keys['KeyA']) vx -= 1;
+          if (keys['KeyD']) vx += 1;
+          if (keys['KeyW']) vy -= 1;
+          if (keys['KeyS']) vy += 1;
+          if (vx||vy){ const len=Math.hypot(vx,vy); vx/=len; vy/=len; }
+          player.x += vx * player.speed * dt;
+          player.y += vy * player.speed * dt;
+        }
+        if (autoApproach && state !== 'fighting') {
+          const dx = target.x - player.x;
+          const dy = target.y - player.y;
+          const d  = Math.hypot(dx, dy);
+          if (d <= ARRIVAL_THRESH) {
+            autoApproach = false;
+            state = 'ready'; setStatus('ready — press SPACE');
+            player.x = target.x; player.y = target.y;
+          } else {
+            const step = Math.min(approachSpeed * dt, d);
+            const nx = dx / d, ny = dy / d;
+            player.x += nx * step;
+            player.y += ny * step;
+          }
+        }
+        player.x = clamp(player.x, player.r, canvas.width - player.r);
+        player.y = clamp(player.y, player.r, canvas.height - player.r);
+      }
+      pValEl.textContent = fmt(playerValue);
+      scoreEl.textContent = fmt(score);
+      highEl.textContent  = fmt(highScore);
+      if (!paused && state === 'fighting') {
+        const now = Date.now();
+        clicks = clicks.filter(t => now - t <= WINDOW_MS);
+        const cps = clicks.length;
+        cpsEl.textContent = cps.toFixed(2);
+        reqEl.textContent = requiredCPS.toFixed(2);
+        let ratio = requiredCPS > 0 ? (cps / requiredCPS) : 1;
+        ratio = Math.max(0, Math.min(1, ratio));
+        barFill.style.width = (ratio * 100) + '%';
+        if (ratio >= 1)      barFill.style.background = 'limegreen';
+        else if (ratio >= .8) barFill.style.background = 'gold';
+        else if (ratio >= .5) barFill.style.background = 'orange';
+        else if (ratio >= .3) barFill.style.background = 'yellow';
+        else                  barFill.style.background = 'crimson';
+        if (ratio >= 1) {
+          endFight(true);
+        } else {
+          const sinceStart = now - fightStartAt;
+          if (sinceStart > FAIL_GRACE_MS && ratio <= 0) endFight(false);
+        }
+      } else {
+        cpsEl.textContent = '0.0';
+        reqEl.textContent = requiredCPS ? requiredCPS.toFixed(2) : '0.0';
+      }
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle = 'rgb(20,20,20)';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      enemies.forEach((en) => {
+        drawNumberCircle(en.x, en.y, en.r, '#c0392b', fmt(en.val));
+        drawLabel(en.x, en.y - en.r - 16, `→ ${fmt(en.predAfter)}`);
+        if (selectedEnemy && en === selectedEnemy) {
+          drawRing(en.x, en.y, en.r + 6, 'rgba(255,255,255,0.25)');
+        }
+      });
+      drawNumberCircle(player.x, player.y, player.r, '#2980b9', fmt(playerValue));
+      requestAnimationFrame(tick);
+    }
+    function drawNumberCircle(x,y,r,color,text){
+      ctx.beginPath();
+      ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.max(16, Math.round(r*0.7))}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+    }
+    function drawLabel(x,y,text){
+      ctx.font = '12px Arial';
+      ctx.fillStyle = '#bbb';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y);
+    }
+    function drawRing(x,y,r,strokeStyle){
+      ctx.beginPath();
+      ctx.arc(x,y,r,0,Math.PI*2);
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
